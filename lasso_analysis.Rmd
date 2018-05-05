@@ -1,0 +1,117 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+load_data, get some statistics
+
+```{r, echo=FALSE}
+
+source("getData.R")
+library(ggplot2)
+library("forecast")
+
+sites <- read.csv("la_station_number_of_data_after_cleansing.csv")
+
+
+
+sitecodes=unique(rapply(list(sites$PM_STATION), function(x) paste0('"',"0",x,'"')))
+
+
+for (i in unique(sitecodes)) {
+  
+  df <- get_data(i,table = 'Airnow_dataset.LA_ALL_DATA_IMPORTSNT_PARS_02222018')
+
+#define pars whould be excluded
+  ex_pars <- c("PM_STATION","time_date")
+
+#check number of data in visiobility 
+
+  if (nrow(subset(df,where = df$VISIBILITY <  -99))<100) {
+    df <- df[df$VISIBILITY >= 0, ]
+    Exclue_predictors <- names(df) %in% ex_pars
+    df <- df [!Exclue_predictors]
+    }
+
+  else 
+    { 
+        ex_pars <- append(ex_pars,"VISIBILITY")
+        Exclue_predictors <- names(df) %in% ex_pars
+        df <- df [!Exclue_predictors]
+        } 
+# change the structure of hour
+  df$HOUR <- as.factor(df$HOUR)
+  #plot_acf=ggAcf(df$PM25)+geom_line(col="green",aes(y=0.5))
+  #print(plot_acf)
+}
+                             
+
+```
+```{r,echo=FALSE}
+
+source("getData.R")
+source("getData.R")
+library(ggplot2)
+library(forecast)
+
+df1 <- get_data("all",table = 'Airnow_dataset.LA_ALL_DATA_IMPORTSNT_PARS_02222018') # load data
+
+ggplot(df, aes(y= time_date, x = PM25))+geom_point()+facet_grid(. ~ PM_STATION)+labs(x = "PM2.5", y = "Date") +ggtitle("PM2.5 concentration for the sites")
+
+#ggAcf(df$PM25,lag.max = 24)+facet_grid(.~PM_STATION)
+
+sites <- read.csv("la_station_number_of_data_after_cleansing.csv")
+
+sitecodes <- unique(rapply(list(sites$PM_STATION), function(x) paste0("0",x)))
+
+for (i in sitecodes) 
+{ df.site <- subset(df, df$PM_STATION == i )
+  acf_plot <- ggAcf(df.site$PM25,lag.max = 20)+geom_line(y=0.5,linetype = 1, size=2,col="red") +theme(axis.text.x = element_text(angle = 45, hjust = 1,size = 4) )+ggtitle(paste0("ACF Site Number ",sitecodes))
+  print(acf_plot)
+  
+}
+
+
+
+
+
+
+```
+
+Do lasso!
+```{r, echo = FALSE}
+
+source("lasso_fun.R")
+
+#preprocees data here ##############add month as factor
+
+#change the name of col names to PM25
+
+name_of_variable <-"PM_3hrlead"
+
+names(df)[names(df) == name_of_variable] <-"PM25"
+
+lasso_estimation(df)
+
+```
+```{r, echo=FALSE}
+
+``` 
+Do Arima:  https://www.otexts.org/fpp/8/1
+tsCV computes the forecast errors obtained by applying forecastfunction to subsets of the time series y using a rolling forecast origin.
+Value
+Numerical time series object containing the forecast errors as a vector (if h=1) and a matrix otherwise.
+
+Details
+Let y contain the time series y1,.,yT. Then forecastfunction is applied successively to the time series y1,.,yt, for t=1,.,T???h, making predictions y^t+h|t. The errors are given by et+h=yt+h???y^t+h|t. If h=1, these are returned as a vector, e1,.,eT. For h>1, they are returned as a matrix with the hth column containing errors for forecast horizon h. The first few errors may be missing as it may not be possible to apply forecastfunction to very short time series.
+
+See also:http://pkg.robjhyndman.com/forecast/reference/tsCV.html#examples
+
+A stationary time series is one whose properties do not depend on the time at which the series is observed.1 So time series with trends, or with seasonality, are not stationary - the trend and seasonality will affect the value of the time series at different times. On the other hand, a white noise series is stationary - it does not matter when you observe it, it should look much the same at any period of time.In general, a stationary time series will have no predictable patterns in the long-term. Time plots will show the series to be roughly horizontal (although some cyclic behaviour is possible) with constant variance.
+
+As well as looking at the time plot of the data, the ACF plot is also useful for identifying non-stationary time series. For a stationary time series, the ACF will drop to zero relatively quickly, while the ACF of non-stationary data decreases slowly. Also, for non-stationary data, the value of r1r1 is often large and positive.
+
+
+```{r}
+
+```

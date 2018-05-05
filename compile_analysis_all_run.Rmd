@@ -1,0 +1,273 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+NOTE: Pay attention to set the same training and testing for the models
+
+Define table name and pars for all models
+```{r,echo=FALSE}
+source("getData.R")
+source("lasso_fun.R")
+source("arimamodel.R")
+source("prepare_data.R")
+source("svm_regression.R")
+library(ggplot2)
+library(forecast)
+library(lubridate)
+
+
+#get site name
+sites <- read.csv("la_station_number_of_data_after_cleansing.csv")
+sitecodes <- unique(rapply(list(sites$PM_STATION), function(x) paste0("0",x)))
+
+# define all pars for all pars
+#table_name <- 'Airnow_dataset.LA_ALL_DATA_IMPORTSNT_PARS_02222018'
+#table_name <-'Airnow_dataset.1hrlead_final_03122018'
+#table_name <- 'Airnow_dataset.3hrLead_03192018'
+table_name <- 'Airnow_dataset.5hourahead_03192018'
+start_year <- 2016
+end_year <- 2017
+
+#define pars for Arima
+h <- 3
+attr <- "PM25"
+
+
+```
+
+Plot location of met and aqi
+```{r,echo=FALSE}
+
+
+library(ggmap)
+#Create a custom color scale
+library(RColorBrewer)
+
+k <- read.csv("D:/research/excels/neighbout_lat_long.csv")
+x <- mean(k$Long)
+y <- mean(k$Lat)
+k$Main_station = as.factor(k$Main_station)
+
+myColors <- brewer.pal(10,"Dark2")
+names(myColors) <- levels(k$Main_station)
+colScale <- scale_colour_manual(name = "Stations",values = myColors)
+
+
+#map = qmap(location = c(x, y), zoom = 9)+scale_shape_manual(values=1:nlevels(k$Main_station)) +geom_point(data = k, aes(x = Long, y = Lat,col=k$shape,shape =k$Main_station ),alpha=0.5,size=12, stroke = 2)+colScale
+#map = qmap(location = c(x, y),zoom=9)+scale_shape_manual(values=1:nlevels(k$Type )) +geom_point(data = k, aes(x = Long, y = Lat,col=Main_station,shape =Type ),alpha=0.5, stroke = 2, size = 12)+colScale
+
+uk <- k[k$Type=="Main",]
+map <- qmap(location = c(mean(uk$Long), mean(uk$Lat)), zoom = 8)+geom_point(data=uk,aes(x=Long,y=Lat,col=Main_station),size=10,stroke = 2)+colScale
+
+
+png(filename="test.png", width=1280, height=1280)
+print(map)
+#dev.off()
+  
+```
+
+
+
+
+
+Load Data and process them
+```{r,echo=FALSE}
+
+df1 <- get_data("all",table = table_name ) # load data
+
+
+# add month as a factor
+#note some columns are handeled inside the functions
+df1$month <- month(df1$time_date)
+df1$month <- as.factor(df1$month )
+df1$HOUR_5hrlead <- as.factor(df1$HOUR_5hrlead)
+#df1$HOUR <- as.factor(df1$HOUR)
+#df1$HOUR_3hrlead <- as.factor(df1$HOUR_3hrlead)
+```
+
+Plot ACF and Time series plot for each site
+```{r,echo=FALSE}
+
+ ggplot(df1, aes(y= time_date, x = PM25))+geom_point()+facet_grid(. ~ PM_STATION)+labs(x = "PM2.5", y = "Date") +ggtitle("PM2.5 concentration for the sites")+theme(axis.text.x=element_text(angle=45,hjust=1, size = 6))
+
+png(filename = "ts.png",width=800, height=1200)
+print(ts_graph)
+
+
+for (i in sitecodes) 
+  
+{ 
+  df.site <- subset(df1, df1$PM_STATION == i )
+  
+  acf_plot <- ggAcf(df.site$PM25,lag.max = 20)+geom_line(y=0.5,linetype = 1, size=2,col="red") +theme(axis.text.x = element_text(angle =   45, hjust = 1,size = 4) )+ggtitle(paste0("ACF Site Number ",i))
+  
+  print(acf_plot)
+  
+}
+
+
+```
+
+Lasso Analysis using neighbourhood information , Important: please pay attention to process of rando sampling
+```{r,echo=FALSE}
+save_resaults_lasso <- matrix(data = NA, nrow = 12,ncol = length(sitecodes),dimnames = list( seq(1,12),sitecodes))
+
+for (i in sitecodes ){
+  
+  df_lass_neighbour <- filter(df1,PM_STATION == i)
+  
+  a=lasso_estimation (df_lass_neighbour,monthly="YES",start_year,end_year)
+  
+  # make data frame form generated data
+  pre_df <- data.frame(pred = a$prediction,observed = a$testSet)
+  
+  #Visualization
+   ggplot_data <- ggplot(pre_df, aes(x=pred,y=observed),alpha=0.2) + geom_point() + geom_abline(slope = 1,intercept = 0,col="red",size=2)+
+                   xlab("Predicted Value") + ylab("Observed Value") + ggtitle(label= paste0("Site Number ", i))
+   print(ggplot_data)
+   save_resaults_lasso [,i] <- a$error_value
+  
+  
+}
+res_lasso <- rowMeans(save_resaults_lasso,na.rm = TRUE)
+res_lasso <- matrix(data = res_lasso , nrow = 12,ncol = 1)
+
+```
+
+LASSO Analysis Without Neighbourhood function
+
+```{r,echo= FALSE}
+#remove the following columns ( neighbourhood effects)
+  cols<-c(grep("neighbour",names(df1)),grep("NEIGHBOUR",names(df1 )))
+  df_lasso_without <- df1 [, -cols]
+  save_resaults_lasso_without <- matrix(data = NA, nrow = 12,ncol = length(sitecodes),dimnames = list( seq(1,12),sitecodes))
+  
+for (i in sitecodes ){
+  
+  df_lasso_without_sites <- filter(df_lasso_without,PM_STATION == i)
+
+  
+  a=lasso_estimation (df_lasso_without_sites,monthly="YES",start_year,end_year)
+  
+  # make data frame form generated data
+  pre_df <- data.frame(pred = a$prediction,observed = a$testSet)
+  
+  #Visualization
+   ggplot_data <- ggplot(pre_df, aes(x=pred,y=observed),alpha=0.2) + geom_point() + geom_abline(slope = 1,intercept = 0,col="red",size=2)+xlab("Predicted Value") + ylab("Observed Value") + ggtitle(label= paste0("Site Number ", i))
+                   
+   print(ggplot_data)
+ save_resaults_lasso_without[,i] <- a$error_value
+  
+}
+
+res_lasso_without<- rowMeans(save_resaults_lasso_without,na.rm = TRUE)
+res_lasso_without<- matrix(data = res_lasso_without , nrow = 12,ncol = 1)
+
+```
+Do Arima:  https://www.otexts.org/fpp/8/1
+
+tsCV computes the forecast errors obtained by applying forecastfunction to subsets of the time series y using a rolling forecast origin.
+Value
+Numerical time series object containing the forecast errors as a vector (if h=1) and a matrix otherwise.
+
+Details
+Let y contain the time series y1,.,yT. Then forecastfunction is applied successively to the time series y1,.,yt, for t=1,.,T???h, making predictions y^t+h|t. The errors are given by et+h=yt+h???y^t+h|t. If h=1, these are returned as a vector, e1,.,eT. For h>1, they are returned as a matrix with the hth column containing errors for forecast horizon h. The first few errors may be missing as it may not be possible to apply forecastfunction to very short time series.
+
+See also:http://pkg.robjhyndman.com/forecast/reference/tsCV.html#examples
+
+A stationary time series is one whose properties do not depend on the time at which the series is observed.1 So time series with trends, or with seasonality, are not stationary - the trend and seasonality will affect the value of the time series at different times. On the other hand, a white noise series is stationary - it does not matter when you observe it, it should look much the same at any period of time.In general, a stationary time series will have no predictable patterns in the long-term. Time plots will show the series to be roughly horizontal (although some cyclic behaviour is possible) with constant variance.
+
+As well as looking at the time plot of the data, the ACF plot is also useful for identifying non-stationary time series. For a stationary time series, the ACF will drop to zero relatively quickly, while the ACF of non-stationary data decreases slowly. Also, for non-stationary data, the value of r1r1 is often large and positive.
+
+```{r,echo= FALSE}
+save_resaults <- matrix(data = NA, nrow = 12,ncol = length(sitecodes),dimnames = list( seq(1,12),sitecodes))
+for ( i in sitecodes){
+  print(i)
+  save_resaults[,i] <- Ar_base(df1,attr,i,h,start_year,end_year) 
+}
+
+
+```
+
+Adding interaction terms for lasso
+```{r, echo= FALSE}
+save_resaults_lasso_interaction <- matrix(data = NA, nrow = 12,ncol = length(sitecodes),dimnames = list( seq(1,12),sitecodes))
+for (i in sitecodes ){
+  
+  df_lass_neighbour <- filter(df1,PM_STATION == i)
+  
+  a=lasso_estimation (df_lass_neighbour,monthly="YES",start_year,end_year, interactions="YES")
+  
+  # make data frame form generated data
+  pre_df <- data.frame(pred = a$prediction,observed = a$testSet)
+  
+  #Visualization
+   ggplot_data <- ggplot(pre_df, aes(x=pred,y=observed),alpha=0.2) + geom_point() + geom_abline(slope = 1,intercept = 0,col="red",size=2)+
+                   xlab("Predicted Value") + ylab("Observed Value") + ggtitle(label= paste0("Site Number ", i))
+   print(ggplot_data)
+   save_resaults_lasso_interaction [,i] <- a$error_value
+  
+  
+}
+res_lasso_interaction<- rowMeans(save_resaults_lasso_interaction,na.rm = TRUE)
+res_lasso_interaction<- matrix(data = res_lasso_interaction , nrow = 12,ncol = 1)
+
+```
+
+
+Histogram of errors
+```{r}
+library(reshape2)
+df_hist <- read.csv(file = "D:/research/excels/1hr.csv")
+expand_data <- melt(df_hist, id.vars=1)
+names(expand_data)[1] <- "months"
+ggplot(expand_data,aes(x =months ,y = value)) + 
+    geom_bar(aes(fill = variable),stat = "identity",position = position_dodge(width=0.5),width = 0.6)+xlab('Month') +ylab('Average Error')+theme(axis.text.x=element_text(angle=45,hjust=1, size = 10)) +ggtitle("Error of forecasting for the next 1hr")
+png(filename = "5HR.png",width=1280, height=1280)  
+print(his)
+```
+
+Histogram of mean and std of PM
+```{r}
+library(reshape2)
+df_hist <- read.csv(file = "D:/research/excels/std.csv")
+expand_data <- melt(df_hist, id.vars=1)
+names(expand_data)[1] <- "months"
+ggplot(expand_data,aes(x =months ,y = value)) + 
+    geom_bar(aes(fill = variable),stat = "identity",position = position_dodge(width=0.5),width = 0.6)+xlab('Month') +ylab('Value')+theme(axis.text.x=element_text(angle=45,hjust=1, size = 10)) +ggtitle("STD And Mean of PM25")
+```
+DOing SVM 
+```{r}
+start_year <- 2014
+end_year <- 2017
+save_resaults_svm<- matrix(data = NA, nrow = 12,ncol = length(sitecodes),dimnames = list( seq(1,12),sitecodes))
+save_resaults_svm_r2<- matrix(data = NA, nrow = 12,ncol = length(sitecodes),dimnames = list( seq(1,12),sitecodes))
+
+
+for (i in sitecodes ){
+  
+  df_svm_neighbour <- filter(df1,PM_STATION == i)
+  
+  
+  
+  svm.model <- svm_regression(df_svm_neighbour, monthly='yes', start_year, end_year,kernel_fun = 'radial')
+  
+
+  # make data frame form generated data
+  pre_df <- data.frame(pred = svm.model$prediction,observed = svm.model$testSet)
+    
+  #Visualization
+   ggplot_data <- ggplot(pre_df, aes(x=pred,y=observed),alpha=0.2) + geom_point() + geom_abline(slope = 1,intercept = 0,col="red",size=2)+
+                   xlab("Predicted Value") + ylab("Observed Value") + ggtitle(label= paste0("Site Number ", i))
+   print(ggplot_data)
+   save_resaults_svm [,i] <-  svm.model$error_value
+  
+  
+}
+ svm_res <- rowMeans(save_resaults_svm,na.rm = TRUE)
+# res_lasso <- matrix(data = res_lasso , nrow = 12,ncol = 1)
+
+```
+
